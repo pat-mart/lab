@@ -33,43 +33,51 @@ class TreeDecomp:
             bag = Graph(adjacency_dict=bag)
             bag.root = root
 
+        bag.root = root
         self.bags.add(bag)
         self.adj[bag] = []
 
-    def add_edge(self, u, u_root, v, v_root):
+    def add_edge(self, u, v):
         """
-        Add an edge between two bags in the tree decomposition.
-        The first vertex v of the first edge added becomes the root.
+        Creates bidirectional edge from u to v, where u and v are bags.
+        Graphs are identified by their root vertex - if a graph with the same
+        root already exists in the tree, that existing graph is used instead.
 
         Args:
-            u: First bag (Graph instance or adjacency dict)
-            v: Second bag (Graph instance or adjacency dict)
+            u: First bag (Graph instance)
+            v: Second bag (Graph instance)
         """
-        # Convert to Graph instances if needed
-        if isinstance(u, dict):
-            from graph import Graph
-            u = Graph(adjacency_dict=u)
-        if isinstance(v, dict):
-            from graph import Graph
-            v = Graph(adjacency_dict=v)
-
-        # Ensure both bags exist
-        self.add_bag(u, u_root)
-        self.add_bag(v, v_root)
-
-        # Set root to v if this is the first edge
+        # Find existing bags with matching roots
+        u_existing = self.find_bag(u)
+        v_existing = self.find_bag(v)
+        
         if self.root is None:
-            self.root = v
+            self.root = v_existing
 
         # Add bidirectional edge
-        if v not in self.adj[u]:
-            self.adj[u].append(v)
-        if u not in self.adj[v]:
-            self.adj[v].append(u)
+        if v_existing not in self.adj[u_existing]:
+            self.adj[u_existing].append(v_existing)
+        if u_existing not in self.adj[v_existing]:
+            self.adj[v_existing].append(u_existing)
+
+    def find_bag(self, bag):
+        """
+        Find an existing bag with the same root, or add this bag if none exists.
+        
+        Args:
+            bag: Graph instance to find or add
+            
+        Returns:
+            The existing bag with matching root, or the provided bag if none exists
+        """
+        # Check if a bag with this root already exists
+        for existing_bag in self.adj.keys():
+            if existing_bag.root == bag.root:
+                return existing_bag
 
     def get_neighbors(self, bag):
         """Get all neighbor bags of a given bag."""
-        return self.adj.get(bag, [])
+        return self.adj.get(bag)
 
     def get_root(self):
         """Get the root of the tree decomposition."""
@@ -79,7 +87,7 @@ class TreeDecomp:
         """Get the number of bags in the decomposition."""
         return len(self.bags)
 
-    def get_bag_from_root(self, graph_root):
+    def get_bag_from_root(self, graph_root: int):
         for bag in self.bags:
             if bag.root == graph_root:
                 return bag
@@ -87,11 +95,13 @@ class TreeDecomp:
         return None
 
     def anc(self, bag) -> list[int]:
+        
         if self.root is bag:
             return [self.root.root]
 
         stack = [(self.root, [self.root.root])]
         seen = {self.root}
+        
 
         while stack:
             node, path = stack.pop()
@@ -102,11 +112,45 @@ class TreeDecomp:
                     new_path = path + [neighbor.root]
 
                     if neighbor is bag:
-                        return new_path
+                        return sorted(new_path)
 
                     stack.append((neighbor, new_path))
 
-        return []
+        return sorted(path)
+    
+    # gets distance array, or the distance of the root vertex of xv or X(v)
+    # to every node in xv.anc
+    def dis(self, xv, xv_anc, g) -> list[int]:
+        v = xv.root
+        
+        dis_list = []
+        
+        for node in xv_anc:
+            bfs_result = g.bfs(start_key=v, goal_key=node)
+            dis_list.append(len(bfs_result))
+        
+        return dis_list
+    
+    
+    def top_down(self):
+        if self.root is None:
+            return []
+    
+        order = []
+        queue = deque([self.root])
+        visited = set([self.root])
+        
+        while queue:
+            current = queue.popleft()
+            order.append(current)
+            
+            for neighbor in self.get_neighbors(current):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+        
+        return order
+        
 
     def tree_width(self):
         """

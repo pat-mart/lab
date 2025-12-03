@@ -1,4 +1,5 @@
 import math
+import copy
 from collections import deque
 import random
 from src.tree_decomp import TreeDecomp
@@ -7,16 +8,8 @@ class Graph:
     
     def __init__(self, adjacency_dict: dict[int, list[int]]=None, file_path=None):
 
-        self._hash = None
-        self.pos: list[int] = []
-        self.dis: list[int] = []
-        
-        # Used for H2H
-        self.root: int = 0
-
         if adjacency_dict:
             self.g: dict[int, list[int]] = adjacency_dict
-            self.start_key = next(iter(adjacency_dict.keys()))
         elif file_path:
             self.g, self.start_key = self.parse_mtx(file_path)
         else:
@@ -24,20 +17,7 @@ class Graph:
             self.start_key = None
             
         self.edges = self.get_edges(adj=self.g)
-            
-    def __eq__(self, other):
-        if not isinstance(other, Graph): return False
-        return self.g == other.g
     
-    def __hash__(self):
-        if self._hash is None:
-            frozen_adj = tuple(
-                (v, frozenset(neigh)) for v, neigh in self.g.items()
-            )
-            self._hash = hash(frozen_adj)
-        return self._hash
-
-
     @staticmethod
     def get_edges(adj: dict[int, list[int]]) -> set[tuple]:
         edges = set()
@@ -56,6 +36,15 @@ class Graph:
                 min_k = k
         
         return min_k
+    
+    @staticmethod
+    def max_degree(h: dict[int, list[int]]) -> int:
+        max_k = list(h.keys())[0]
+        for k, v in h.items():
+            if len(v) > len(h[max_k]):
+                max_k = k
+        
+        return max_k
 
     @staticmethod
     def parse_mtx(file_path: str):
@@ -80,7 +69,8 @@ class Graph:
 
         return adjacency_dict, start_key
 
-    def bfs(self, start_key: int, goal_key: int = -1):
+    @staticmethod
+    def bfs(g: dict[int, list[int]], start_key: int, goal_key: int = -1):
         visited = set()
         queue = deque([start_key])
         order = []
@@ -97,7 +87,7 @@ class Graph:
                 if goal_key != -1 and goal_key == vertex:
                     return order, distances
 
-                for neighbor in self.g[vertex]:
+                for neighbor in g[vertex]:
                     if neighbor not in visited:
                         distances[neighbor] = current_distance + 1
                         queue.append(neighbor)
@@ -133,302 +123,156 @@ class Graph:
 
         for _ in range(samples):
             start = random.choice(vertices)
-            ecc = max(self.bfs(start)[1].values())
+            ecc = max(self.bfs(self.g, start)[1].values())
             
             lower_bound = max(lower_bound, ecc)
             upper_bound = min(upper_bound, ecc * 2)
 
         return lower_bound, upper_bound
     
-    """
-    Algorithm 2 Distance Preserving Vertex Elimination
-        - Eliminates vertex v from weight graph H, preserves shortest-path distances
-        - H is dict of dicts. H[u][w] is weight between u and w
-    """
-    def dp_elim(self, H, v):
-        if v not in H:
-            return
+    # Algorithm 2 - eliminates vertices in g using min degree
+    def vertex_elim(self, adj: dict[int, list[int]], vertex: int) -> dict[int, list[int]]:
+        if vertex not in adj:
+            return {u: list(neis) for u, neis in adj.items()}
         
-        neighbors = list(H[v].keys())
+        working: dict[int, set[int]] = {u: set(neis) for u, neis in adj.items()}
 
-        # For every pair of neighbors (u, w)
+        new_h: dict[int, set[int]] = {u: set(neis) for u, neis in working.items()}
+        
+        neighbors = list(working[vertex])
+        
         for i in range(len(neighbors)):
             u = neighbors[i]
             for j in range(i + 1, len(neighbors)):
                 w = neighbors[j]
+                if w not in new_h[u]:
+                    new_h[u].add(w)
+                    new_h[w].add(u)
 
-                # New distance going through v
-                new_dist = H[v][u] + H[v][w]
-
-                # Update if no edge or shorter path found
-                if w not in H[u] or new_dist < H[u][w]:
-                    H[u][w] = new_dist
-                    H[w][u] = new_dist
-
-        # Remove v and its incident edges
         for u in neighbors:
-            if v in H[u]:
-                del H[u][v]
-        del H[v]
-
-    """
-    Algorithm 3 DP Tree Decomposition
-        - g is adjancency list dict[int, list[int]]
-        - Returns bags[v], lambdas[v], parent[v], and phi[v]
-            bags[v] represents X(v) = {v} U N(v)
-            lambdas[v] represents lambda-array of distances from v to each vertex in bags[v]
-            parent[v] represents the parent center in the DP-tree
-            phi[v] represents the elimination order index 
-    """
-    def naive_dp_tree_decomp(self, g: dict[int, list[int]]):
-
-        # Build weighted graph H with weight 1 on every edge
-        H = {}
-        for u in g:
-            H[u] = {}
-            for w in g[u]:
-                H[u][w] = 1
-
-        bags = {}
-        lambdas = {}
-        phi = {}
-
-        rem_vertices = list(H.keys())
-        num_vertices = len(rem_vertices)
-
-        # Eliminate vertices one-by-one
-        for i in range(1, num_vertices + 1):
-            smallest_degree_vertex = None
-            smallest_degree = float('inf')
-
-            # Find min-degree vertex in current H
-            for x in H.keys():
-                degree_x = len(H[x])
-                if degree_x < smallest_degree:
-                    smallest_degree = degree_x
-                    smallest_degree_vertex = x
+            new_h[u].discard(vertex)
             
-            v = smallest_degree_vertex
+        del new_h[vertex]
 
-            # Build bag X(v)
-            neighbors_of_v = list(H[v].keys())
-            bag = [v]
-            for u in neighbors_of_v:
-                bag.append(u)
-            bags[v] = bag
+        return {u: sorted(list(neis)) for u, neis in new_h.items()}
 
-            # Build lambda(v)
-            lam = []
-            lam.append(0)
-            for u in neighbors_of_v:
-                lam.append(H[v][u])
-            lambdas[v] = lam
-
-            # Record elimination order
-            phi[v] = i
-
-            # Distance-preserving elimination
-            self.dp_elim(H, v)
-
-        # Compute parent[v]
-        parent = {}
-        for v in bags:
-            bag_v = bags[v]
-
-            candidates = []
-            for x in bag_v:
-                # only consider x != v and x that has a phi(x)
-                if x != v and x in phi:
-                    candidates.append(x)
-
-            if len(candidates) == 0:
-                parent[v] = None
-            else:
-                best_parent = candidates[0]
-                for x in candidates:
-                    if phi[x] < phi[best_parent]:
-                        best_parent = x
-                parent[v] = best_parent
-
-        for v in bags:
-            bag_v = bags[v]
-            lam_v = lambdas[v]
-
-            index_v = 0
-            while index_v < len(bag_v) and bag_v[index_v] != v:
-                index_v += 1
-            
-            pivot_lambda = lam_v[index_v]
-            pivot = (v, pivot_lambda)
-
-            rest = []
-            idx = 0
-            while idx < len(bag_v):
-                if bag_v[idx] != v:
-                    vertex_value = bag_v[idx]
-                    lambda_value = lam_v[idx]
-                    rest.append((vertex_value, lambda_value))
-                idx += 1
-            
-            n = len(rest)
-            a = 0
-            while a < n:
-                b = 0
-                while b < n - 1:
-                    left_phi = phi[rest[b][0]]
-                    right_phi = phi[rest[b + 1][0]]
-                    if left_phi < right_phi:
-                        temp = rest[b]
-                        rest[b] = rest[b + 1]
-                        rest[b + 1] = temp
-                    b += 1
-                a += 1
-
-            new_bag = []
-            new_lam = []
-
-            idx = 0
-            while idx < len(rest):
-                new_bag.append(rest[idx][0])
-                new_lam.append(rest[idx][1])
-                idx += 1
-
-            new_bag.append(pivot[0])
-            new_lam.append(pivot[1])
-
-            bags[v] = new_bag
-            lambdas[v] = new_lam
+    
+    '''Returns tree decomposition bags with [bag root: vertices], tree decomposition adjacency with [bag root: neighbor bag roots], root of tree decomposition (root of last bag added)'''
+    def dp_tree_decomp(self):
+        h_adj = copy.deepcopy(self.g)
         
-        return bags, lambdas, parent, phi
-
-    """
-    Ancestor chains for Algorithm 5
-        - For every center v, builds its chain of ancestors from the root
-    """
-    def build_ancestors(self, bags, parent):
-        anc = {}
-
-        def helper(v):
-            if v in anc:
-                return anc[v]
-            if parent[v] is None:
-                anc[v] = [v]
-            else:
-                anc[v] = helper(parent[v]) + [v]
-            return anc[v]
+        td_bags: dict[int, list[int]] = {} # key: bag root, value: all vertices in bag
+        td_adj: dict[int, list[int]] = {} # key: bag root, value: adjacent bag roots in td
         
-        for v in bags:
-            helper(v)
+        ordering: dict[int, int] = {}
+        num_vertices = len(self.g)
+        
+        root = 0
 
-        return anc
+        for i in range(1, num_vertices+1):
+            min_degree: int = self.min_degree(h=h_adj)
+            star_min_deg = self.star(h_adj, min_degree)
+            
+            td_bags[min_degree] = self.dict_to_list(star_min_deg)
+            
+            h_adj = self.vertex_elim(h_adj, min_degree)
+            ordering[min_degree] = i
+            
+        td_adj = {v: [] for v in td_bags}
 
-    """
-    Algorithm 5: H2H Index Construction
-        - Produces anc[v], pos[v], and dis[v]
-            anc[v] represents the ancestor chain of v's center
-            pos[v] represents the positions of bag vertices in anc[v]
-            dis[v] represents the distance array of anc[v]
-    """
-    def naive_H2H(self, bags, lambdas, parent, phi):
-        anc = self.build_ancestors(bags, parent)
-        pos = {}
-        dis = {}
+        for v in td_bags:
+            # X(v)
+            bag = td_bags[v]
 
-        vertices_in_order = sorted(phi.keys(), key=lambda x: phi[x], reverse=True)
+            # find vertex in X(v)\{v} with smallest elimination order
+            candidates = [u for u in bag if u != v]
+            if not candidates:
+                continue
 
-        for v in vertices_in_order:
-            bag_v = bags[v]
-            lam_v = lambdas[v]
-            chain_v = anc[v]
+            min_u = min(candidates, key=lambda u: ordering[u])
+            
+            td_adj[v].append(min_u)
+            td_adj[min_u].append(v)
+                        
+        # addl for loop here for reassigning edge weights
+        
+        return td_bags, td_adj, root
 
-            # Build pos[v]
+    @staticmethod
+    def dict_to_list(adj: dict[int, list[int]]) -> list[int]:
+        to_ret = [list(adj.keys())[0]]
+        for value in adj.values():
+            for v in value:
+                to_ret.append(v)
+
+        return to_ret
+
+    # Hierarchical 2-hop indexing
+    def h_two_h(self, td_bags, td_adj, root):
+        
+        # implement algorithm 1
+        # find graph of ~100k vertices
+        # make tables similar to figure 11
+        
+        top_down = self.bfs(td_adj, root)[0]
+        
+        pos: dict[int, list[int]] = {}
+        dis: dict[int, list[int]] = {}
+        anc: dict[int, list[int]] = {}
+        
+        # precompute anc list for every vertex
+        for bag_root in top_down:
+            anc_list = self.bfs(td_adj, root, bag_root)[0]
+            
+            if not bag_root in anc:
+                anc[bag_root] = anc_list
+        
+        # precompute distance arrays 
+        # array of distances (from original graph) of root of X(v) to every vertex in X(v).anc
+
+        for bag_root in top_down:
+            
+            vertex_list = td_bags[bag_root]
+            
             pos_v = []
-            for x in bag_v:
-                found_position = -1
-                for index in range(len(chain_v)):
-                    if chain_v[index] == x:
-                        found_position = index
-                        break
+            for v in vertex_list:
+                pos_v.append(anc[bag_root].index(v) + 1)
                 
-                if found_position == -1:
-                    raise ValueError(f"{x} from X({v}) is not in its ancestor chain")
-                
-                pos_v.append(found_position)
+            pos[bag_root] = pos_v
+            anc_list = anc[bag_root]
             
-            pos[v] = {bag_v[i]: pos_v[i] for i in range(len(bag_v))}
-
-            # Build dis[v]
-            L = len(chain_v)
-            dis_v = [float('inf')] * L
-            dis_v[L - 1] = 0.0  # distance from v to itself
-
-            for i in range(L - 1):
+            dis_v = [float('inf')] * len(anc_list)
+            
+            
+            for i in range(len(anc_list) - 1):
                 best_distance = float('inf')
-
-                j = 0
-                while j < len(bag_v):
-                    if bag_v[j] == v:
-                        j += 1
+                
+                for j in range(len(td_bags[bag_root]) - 1):
+                    
+                    if vertex_list[j] == bag_root:
                         continue
-                    x_j = bag_v[j]
-                    lam_xj = lam_v[j]
-                    pos_xj = pos[v][x_j]
-
-                    if pos_xj > i:
-                        if (x_j in dis) and (i < len(dis[x_j])):
-                            temp_distance = dis[x_j][i]
-                        else:
-                            temp_distance = float('inf')
-                    else:
-                        ancestor_i = chain_v[i]
-                        if (ancestor_i in dis) and (pos_xj < len(dis[ancestor_i])):
-                            temp_distance = dis[ancestor_i][pos_xj]
-                        else:
-                            temp_distance = float('inf')
                     
-                    total = lam_xj + temp_distance
-                    if total < best_distance:
-                        best_distance = total
+                    if pos[bag_root][j] > i:
+                        xj = td_bags[bag_root][j]
+                        if xj in dis: 
+                            temp_dist = dis[xj][i]
+                        else:
+                            temp_dist = float('inf')
+                    else: 
+                        anc_i = anc_list[i]
+                        pos_xj = pos[bag_root][j]
+                        
+                        if anc_i in dis: 
+                            temp_dist = dis[anc_i][pos_xj]
+                        else: 
+                            temp_dist = float('inf')
+                
+                    total = 1 + temp_dist
+                    best_distance = min(total, best_distance)
                     
-                    j += 1
-
                 dis_v[i] = best_distance
+            
+            dis[bag_root] = dis_v
+            dis_v[len(anc_list) - 1] = 0
 
-            dis[v] = dis_v
-
-        return anc, pos, dis
-    
-    """
-    Algorithm 1 H2H Distance Query
-        - Uses anc[] and dis[] from Algorithm 5 to answer dist(s, t)
-        - anc[v] is the ancestor chain for v
-        - dis[v][i] is the distance from v to anc[v][i]
-
-    Computes the shortest path distance between vertices s and t using H2H index
-    Returns float('inf') if no path is found
-    """
-    def H2H_query(self, s, t, anc, pos, dis, bags):
-        if s not in anc or t not in anc:
-            return float('inf')
-        if s not in dis or t not in dis:
-            return float('inf')
-
-        chain_s = anc[s]
-        chain_t = anc[t]
-        dis_s = dis[s]
-        dis_t = dis[t]
-
-        limit = min(len(chain_s), len(chain_t), len(dis_s), len(dis_t))
-
-        best_distance = float('inf')
-
-        i = 0
-        while i < limit and chain_s[i] == chain_t[i]:
-            total = dis_s[i] + dis_t[i]
-            if total < best_distance:
-                best_distance = total
-            i += 1
-
-        return best_distance
-    
-    
+        return pos, dis
